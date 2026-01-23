@@ -1,0 +1,36 @@
+services:       # ← Aquí definimos los "servicios" (contenedores) que queremos levantar
+                #   En este caso solo tenemos uno: la base de datos.
+
+  db:           # ← Nombre del servicio (podés llamarlo como quieras: db, postgres, biblioteca-db, etc.)
+                  #   Este nombre se usa para referirte al contenedor (ej. docker compose logs db)
+    image: postgres:16
+                    # ← Imagen oficial de PostgreSQL que vamos a usar.
+                    #   "postgres:16" significa la versión 16 de la imagen oficial de Postgres.
+                    #   Podrías usar :15, :14, o :latest (pero mejor especificar versión para evitar sorpresas).
+    restart: always
+                    # ← Política de reinicio automático.
+                    #   "always" → si el contenedor se cae o reiniciás la máquina, Docker lo levanta solo.
+    environment:  # ← Variables de entorno que le pasamos al contenedor
+      POSTGRES_USER: postgres          # Usuario administrador de la base
+      POSTGRES_PASSWORD: postgres123   # Contraseña (cambiala en producción por algo segura)
+      POSTGRES_DB: biblioteca          # Nombre de la base de datos que crea automáticamente al iniciar
+
+    ports:
+      - "5432:5432"                    # Mapeo de puertos: puerto 5432 del contenedor → puerto 5432 de tu máquina
+                                          # Así tu app Go y DataGrip pueden conectar a localhost:5432
+    volumes:
+      - datos-biblioteca:/var/lib/postgresql/data
+                                          # Volumen persistente: guarda los datos de la base en tu disco
+                                          # pgdata es el nombre del volumen (definido abajo)
+                                          # /var/lib/postgresql/data es donde Postgres guarda todo internamente
+    healthcheck:                       # Chequeo automático de salud (muy útil)
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+                                            # Comando que Docker ejecuta para ver si la DB está lista
+      interval: 5s                     # Cada 5 segundos
+      timeout: 5s                      # Si no responde en 5s → se considera fallido
+      retries: 5                       # Intenta 5 veces antes de marcar como "unhealthy"
+
+volumes:                               # Definición de volúmenes (persistencia)
+  datos-biblioteca:                              # Nombre del volumen (puede ser cualquiera)
+                                        # Docker crea un volumen con este nombre y guarda los datos ahí
+                                        # Así aunque borres el contenedor, los datos quedan
