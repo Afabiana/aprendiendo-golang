@@ -1,12 +1,14 @@
 package main
 
-import(
-	"fmt"
-	"context" //cancelación, timeout, valores. El "mensajero" lleva solo lo necesario: "para ya", "tenés 5 segundos", "este es el user 12345"
+import (
+	//"context" cancelación, timeout, valores. El "mensajero" lleva solo lo necesario: "para ya", "tenés 5 segundos", "este es el user 12345"
+
 	"encoding/json"
+	"fmt"
+	"net/http"
 	"strconv"
 	"strings"
-	"net/http"
+
 	"github.com/jackc/pgx/v5"
 )
 
@@ -16,7 +18,7 @@ func librosHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		// Consulta a Postgres
-		rows, err := db.Query(context.Background(),
+		rows, err := db.Query(r.Context(),
 			"SELECT id, titulo, autor, ano FROM libros ORDER BY id") //espcifico las columnas para asegurar el orden en que Postgres devuelve los atributos
 		if err != nil {
 			respondError(w, "Error al consultar la base", http.StatusInternalServerError)
@@ -109,33 +111,82 @@ func librosHandlerByID(w http.ResponseWriter, r *http.Request) {
 
 	case http.MethodPut:
 
+		var upd LibroPut
 		var actualizado Libro
-		var upd LibroUpdate
 
 		if err := json.NewDecoder(r.Body).Decode(&upd); err != nil {
 			respondError(w, "json inválido", http.StatusBadRequest)
 			return
 		}
 
+		if err := upd.Validate(); err != nil {
+			respondError(w, err.Error(), http.StatusBadRequest)
+		}
+
+		//DB.EXEC para INSERT/UPDATE/DELETE
+		err := db.QueryRow(r.Context(),
+			`UPDATE libros
+			SET titulo = $1, autor = $2, ano = $3, WHERE id = $4
+			RETURNING id, titulo, autor, ano`,
+			upd.Titulo,
+			upd.Autor,
+			upd.Ano,
+			id,
+		).Scan(
+			&actualizado.ID,
+			&actualizado.Titulo,
+			&actualizado.Autor,
+			&actualizado.Ano,
+		)
+
+		if err == pgx.ErrNoRows {
+			respondError(w, "libro no encontrado", http.StatusNotFound)
+			return
+		}
+
+		if err != nil {
+			respondError(w, "error al actualizar", http.StatusInternalServerError)
+			return
+		}
+
+		json.NewEncoder(w).Encode(actualizado)
+
+	case http.MethodPatch:
+		var patch LibroPatch
+		var actualizado Libro
+
+		// vuelco la info en el LibroPatch
+		if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
+			respondError(w, "json invalido", http.StatusBadRequest)
+			return
+		}
+
+		// chequeo que los datos que llegaron sean validos
+		if err := patch.Validate(); err != nil {
+			respondError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		// armo la query dinamicamente
 		setClauses := []string{} //voy a ir formando la query
 		args := []interface{}{}  //aca voy a guardar los valores de cada atributo
 		i := 1                   //contador de args
 
-		if upd.Titulo != nil {
+		if patch.Titulo != nil {
 			setClauses = append(setClauses, fmt.Sprintf("titulo = $%d", i))
-			args = append(args, *upd.Titulo)
+			args = append(args, *patch.Titulo)
 			i++
 		}
 
-		if upd.Autor != nil {
-			setClauses = append(setClauses, fmt.Sprintf("Autor = $%d", i))
-			args = append(args, *upd.Autor) //upd.autor es un puntero, por eso uso & para pasar el valor y no la direccion
+		if patch.Autor != nil {
+			setClauses = append(setClauses, fmt.Sprintf("autor = $%d", i))
+			args = append(args, *patch.Autor) //patch.autor es un puntero, por eso uso * para pasar el valor y no la direccion
 			i++
 		}
 
-		if upd.Ano != nil {
+		if patch.Ano != nil {
 			setClauses = append(setClauses, fmt.Sprintf("ano = $%d", i))
-			args = append(args, *upd.Ano)
+			args = append(args, *patch.Ano)
 			i++
 		}
 
@@ -146,31 +197,30 @@ func librosHandlerByID(w http.ResponseWriter, r *http.Request) {
 
 		//aca formo la query
 		query := fmt.Sprintf(
-			"UPDATE libros SET %s WHERE id = $%d RETURNING id, titulo, autor, ano",
+			"UPDATE libros SET %s WHERE id = $%d RETURNING titulo, autor, ano",
 			strings.Join(setClauses, ", "),
 			i,
 		)
 
-		fmt.Println("Sin join", setClauses)
-		fmt.Println("query", query)
-
 		//cuando ya hice todos los chequeos agrego el id como ultimo arg
 		args = append(args, id)
 
-		//DB.EXEC para INSERT/UPDATE/DELETE
 		err := db.QueryRow(r.Context(), query, args...). //args... expande el slice como parámetros individuales
-									Scan(&actualizado.ID,
-				&actualizado.Titulo,
+									Scan(&actualizado.Titulo,
 				&actualizado.Autor,
 				&actualizado.Ano)
 
-		if err != nil {
-			respondError(w, "error al actualizar", http.StatusBadRequest)
+		if err == pgx.ErrNoRows {
+			respondError(w, "libro no encontrado", http.StatusNotFound)
 			return
 		}
 
-		actualizado.ID = id
-		json.NewEncoder(w).Encode(actualizado)
+		if err != nil {
+			respondError(w, "error al actualizar", http.StatusInternalServerError)
+			return
+		}
+
+		json.NewEncoder(w).Encode(actualizado) //quizas aca podriamos usar el omitempty para retornar solo los campos actualizados
 
 	case http.MethodDelete:
 
@@ -187,8 +237,11 @@ func librosHandlerByID(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// libros = append(libros[:idx], libros[idx+1:]...)
-		w.WriteHeader(http.StatusOK)
-		fmt.Fprintf(w, `{"message": "Libro %d eliminado"}`, id)
+		// w.WriteHeader(http.StatusOK)
+		// fmt.Fprintf(w, `{"message": "Libro %d eliminado"}`, id)
+
+		// 204 → sin body
+		w.WriteHeader(http.StatusNoContent)
 
 	default:
 		respondError(w, "metodo no permitido", http.StatusMethodNotAllowed)
@@ -204,3 +257,5 @@ func respondError(w http.ResponseWriter, msg string, status int) {
 		"error": msg,
 	})
 }
+
+//TODO: estructurar bien el proyecto, los DTOS de response y de respuesta, packages etc
