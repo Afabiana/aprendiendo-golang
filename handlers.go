@@ -5,6 +5,7 @@ import (
 
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -13,17 +14,21 @@ import (
 )
 
 func librosHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
+	// w.Header().Set("Content-Type", "application/json")
+
+	log.Printf("%s %s", r.Method, r.URL.Path)
 
 	switch r.Method {
 	case http.MethodGet:
 		// Consulta a Postgres
 		rows, err := db.Query(r.Context(),
 			"SELECT id, titulo, autor, ano FROM libros ORDER BY id") //espcifico las columnas para asegurar el orden en que Postgres devuelve los atributos
+
 		if err != nil {
 			respondError(w, "Error al consultar la base", http.StatusInternalServerError)
 			return
 		}
+
 		defer rows.Close() //ejecutá esta línea cuando la función termine y libera los recursos del cursor (muy importante para no tener leaks)
 
 		var libros []Libro
@@ -37,18 +42,23 @@ func librosHandler(w http.ResponseWriter, r *http.Request) {
 			libros = append(libros, l)
 		}
 
+		if err := rows.Err(); err != nil {
+			respondError(w, "Error al iterar filas", http.StatusInternalServerError)
+			return
+		}
 		// Si no hay error, devolvemos el JSON
-		json.NewEncoder(w).Encode(libros)
+		respondJSON(w, http.StatusOK, libros)
 
 	case http.MethodPost:
 		var nuevo Libro
 
-		if err := json.NewDecoder(r.Body).Decode(&nuevo); err != nil {
-			respondError(w, "Formato incorrecto", http.StatusBadRequest)
+		log.Println("hola entre en el post")
+		if !decodeJSON(w, r, &nuevo) {
+			return
 		}
 
 		//podria validar info vacia o años > hoy
-
+		log.Println(nuevo)
 		err := db.QueryRow(r.Context(),
 			"INSERT INTO libros (titulo, autor, ano) VALUES ($1, $2, $3) RETURNING id",
 			nuevo.Titulo, nuevo.Autor, nuevo.Ano).
@@ -60,17 +70,22 @@ func librosHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Respondemos con 201 Created + el libro completo (incluyendo ID generado)
-		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(nuevo)
+		// w.WriteHeader(http.StatusCreated)
+		// json.NewEncoder(w).Encode(nuevo)
+		respondJSON(w, http.StatusCreated, nuevo)
+
 	default:
+		w.Header().Set("Allow", "GET, POST") // XQ PROTOCOLO HTTP dice que servidor debería indicar qué métodos sí están permitidos para ese recurso
 		respondError(w, "metodo no permitido", http.StatusMethodNotAllowed)
 	}
 }
 
 func librosHandlerByID(w http.ResponseWriter, r *http.Request) {
 
+	log.Printf("%s %s", r.Method, r.URL.Path)
+
 	// Siempre seteamos el Content-Type para que el cliente sepa que devolvemos JSON
-	w.Header().Set("Content-type", "application/json")
+	// w.Header().Set("Content-type", "application/json")
 
 	// 1. Extraer el ID de la URL
 	// r.URL.Path es algo como "/tareas/123" o "/tareas/abc"
@@ -107,26 +122,26 @@ func librosHandlerByID(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		json.NewEncoder(w).Encode(l)
+		respondJSON(w, http.StatusOK, l)
 
 	case http.MethodPut:
 
 		var upd LibroPut
 		var actualizado Libro
 
-		if err := json.NewDecoder(r.Body).Decode(&upd); err != nil {
-			respondError(w, "json inválido", http.StatusBadRequest)
+		if !decodeJSON(w, r, &upd) {
 			return
 		}
 
 		if err := upd.Validate(); err != nil {
 			respondError(w, err.Error(), http.StatusBadRequest)
+			return
 		}
 
 		//DB.EXEC para INSERT/UPDATE/DELETE
 		err := db.QueryRow(r.Context(),
 			`UPDATE libros
-			SET titulo = $1, autor = $2, ano = $3, WHERE id = $4
+			SET titulo = $1, autor = $2, ano = $3 WHERE id = $4
 			RETURNING id, titulo, autor, ano`,
 			upd.Titulo,
 			upd.Autor,
@@ -149,17 +164,20 @@ func librosHandlerByID(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		json.NewEncoder(w).Encode(actualizado)
+		respondJSON(w, http.StatusOK, actualizado)
 
 	case http.MethodPatch:
 		var patch LibroPatch
 		var actualizado Libro
 
-		// vuelco la info en el LibroPatch
-		if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
-			respondError(w, "json invalido", http.StatusBadRequest)
+		if !decodeJSON(w, r, &patch) {
 			return
 		}
+		// vuelco la info en el LibroPatch
+		// if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
+		// 	respondError(w, "json invalido", http.StatusBadRequest)
+		// 	return
+		// }
 
 		// chequeo que los datos que llegaron sean validos
 		if err := patch.Validate(); err != nil {
@@ -197,7 +215,7 @@ func librosHandlerByID(w http.ResponseWriter, r *http.Request) {
 
 		//aca formo la query
 		query := fmt.Sprintf(
-			"UPDATE libros SET %s WHERE id = $%d RETURNING titulo, autor, ano",
+			"UPDATE libros SET %s WHERE id = $%d RETURNING id, titulo, autor, ano",
 			strings.Join(setClauses, ", "),
 			i,
 		)
@@ -206,7 +224,8 @@ func librosHandlerByID(w http.ResponseWriter, r *http.Request) {
 		args = append(args, id)
 
 		err := db.QueryRow(r.Context(), query, args...). //args... expande el slice como parámetros individuales
-									Scan(&actualizado.Titulo,
+									Scan(&actualizado.ID,
+				&actualizado.Titulo,
 				&actualizado.Autor,
 				&actualizado.Ano)
 
@@ -220,8 +239,8 @@ func librosHandlerByID(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		json.NewEncoder(w).Encode(actualizado) //quizas aca podriamos usar el omitempty para retornar solo los campos actualizados
-
+		//quizas aca podriamos usar el omitempty para retornar solo los campos actualizados
+		respondJSON(w, http.StatusOK, actualizado)
 	case http.MethodDelete:
 
 		result, err := db.Exec(r.Context(), "DELETE FROM libros WHERE id = $1", id)
@@ -242,8 +261,10 @@ func librosHandlerByID(w http.ResponseWriter, r *http.Request) {
 
 		// 204 → sin body
 		w.WriteHeader(http.StatusNoContent)
+		// respondJSON(w, http.StatusNoContent, nil)
 
 	default:
+		w.Header().Set("Allow", "GET, PUT, PATCH, DELETE")
 		respondError(w, "metodo no permitido", http.StatusMethodNotAllowed)
 
 	}
@@ -251,11 +272,31 @@ func librosHandlerByID(w http.ResponseWriter, r *http.Request) {
 }
 
 func respondError(w http.ResponseWriter, msg string, status int) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(map[string]string{
+	respondJSON(w, status, map[string]string{
 		"error": msg,
 	})
+}
+
+func respondJSON(w http.ResponseWriter, status int, data any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+
+	if err := json.NewEncoder(w).Encode(data); err != nil {
+		// No se puede volver a escribir headers acá
+		// Solo loguear
+		log.Println("error encoding JSON:", err)
+	}
+}
+
+func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields() // para evitar campos tipo { "hack": "ll..ñk" } Decoder compara: keys del JSON vs campos exportados del struct + tags json
+
+	if err := dec.Decode(dst); err != nil {
+		respondError(w, "json inválido", http.StatusBadRequest)
+		return false
+	}
+	return true
 }
 
 //TODO: estructurar bien el proyecto, los DTOS de response y de respuesta, packages etc
