@@ -50,19 +50,26 @@ func librosHandler(w http.ResponseWriter, r *http.Request) {
 		respondJSON(w, http.StatusOK, libros)
 
 	case http.MethodPost:
-		var nuevo Libro
+		var nuevo LibroInput
+		var salida Libro
 
-		log.Println("hola entre en el post")
-		if !decodeJSON(w, r, &nuevo) {
+		if err := decodeJSON(w, r, &nuevo); err != nil {
+			respondError(w, "json invalido", http.StatusBadRequest)
 			return
 		}
 
-		//podria validar info vacia o años > hoy
-		log.Println(nuevo)
+		if err := nuevo.Validate(); err != nil {
+			respondError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
 		err := db.QueryRow(r.Context(),
-			"INSERT INTO libros (titulo, autor, ano) VALUES ($1, $2, $3) RETURNING id",
+			"INSERT INTO libros (titulo, autor, ano) VALUES ($1, $2, $3) RETURNING id, titulo, autor, ano",
 			nuevo.Titulo, nuevo.Autor, nuevo.Ano).
-			Scan(&nuevo.ID) //scan no deja de ser una funcion, si no paso puntero, recibe una copia de nuevo.ID
+			Scan(&salida.ID,
+				&salida.Titulo,
+				&salida.Autor,
+				&salida.Ano,) //scan no deja de ser una funcion, si no paso puntero, recibe una copia de nuevo.ID
 
 		if err != nil {
 			respondError(w, "Error al crear nuevo libro", http.StatusInternalServerError)
@@ -72,7 +79,7 @@ func librosHandler(w http.ResponseWriter, r *http.Request) {
 		// Respondemos con 201 Created + el libro completo (incluyendo ID generado)
 		// w.WriteHeader(http.StatusCreated)
 		// json.NewEncoder(w).Encode(nuevo)
-		respondJSON(w, http.StatusCreated, nuevo)
+		respondJSON(w, http.StatusCreated, salida)
 
 	default:
 		w.Header().Set("Allow", "GET, POST") // XQ PROTOCOLO HTTP dice que servidor debería indicar qué métodos sí están permitidos para ese recurso
@@ -126,10 +133,11 @@ func librosHandlerByID(w http.ResponseWriter, r *http.Request) {
 
 	case http.MethodPut:
 
-		var upd LibroPut
-		var actualizado Libro
+		var upd LibroInput
+		var salida Libro
 
-		if !decodeJSON(w, r, &upd) {
+		if err := decodeJSON(w, r, &upd); err != nil {
+			respondError(w, "json invalido", http.StatusBadRequest)
 			return
 		}
 
@@ -148,10 +156,10 @@ func librosHandlerByID(w http.ResponseWriter, r *http.Request) {
 			upd.Ano,
 			id,
 		).Scan(
-			&actualizado.ID,
-			&actualizado.Titulo,
-			&actualizado.Autor,
-			&actualizado.Ano,
+			&salida.ID,
+			&salida.Titulo,
+			&salida.Autor,
+			&salida.Ano,
 		)
 
 		if err == pgx.ErrNoRows {
@@ -164,13 +172,14 @@ func librosHandlerByID(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		respondJSON(w, http.StatusOK, actualizado)
+		respondJSON(w, http.StatusOK, salida)
 
 	case http.MethodPatch:
 		var patch LibroPatch
-		var actualizado Libro
+		var salida Libro
 
-		if !decodeJSON(w, r, &patch) {
+		if err := decodeJSON(w, r, &patch); err != nil {
+			respondError(w, "json invalido", http.StatusBadRequest)
 			return
 		}
 		// vuelco la info en el LibroPatch
@@ -224,10 +233,10 @@ func librosHandlerByID(w http.ResponseWriter, r *http.Request) {
 		args = append(args, id)
 
 		err := db.QueryRow(r.Context(), query, args...). //args... expande el slice como parámetros individuales
-									Scan(&actualizado.ID,
-				&actualizado.Titulo,
-				&actualizado.Autor,
-				&actualizado.Ano)
+									Scan(&salida.ID,
+				&salida.Titulo,
+				&salida.Autor,
+				&salida.Ano)
 
 		if err == pgx.ErrNoRows {
 			respondError(w, "libro no encontrado", http.StatusNotFound)
@@ -240,7 +249,7 @@ func librosHandlerByID(w http.ResponseWriter, r *http.Request) {
 		}
 
 		//quizas aca podriamos usar el omitempty para retornar solo los campos actualizados
-		respondJSON(w, http.StatusOK, actualizado)
+		respondJSON(w, http.StatusOK, salida)
 	case http.MethodDelete:
 
 		result, err := db.Exec(r.Context(), "DELETE FROM libros WHERE id = $1", id)
@@ -288,15 +297,14 @@ func respondJSON(w http.ResponseWriter, status int, data any) {
 	}
 }
 
-func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
+func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) error {
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields() // para evitar campos tipo { "hack": "ll..ñk" } Decoder compara: keys del JSON vs campos exportados del struct + tags json
 
 	if err := dec.Decode(dst); err != nil {
-		respondError(w, "json inválido", http.StatusBadRequest)
-		return false
+		return err
 	}
-	return true
+	return nil
 }
 
 //TODO: estructurar bien el proyecto, los DTOS de response y de respuesta, packages etc
