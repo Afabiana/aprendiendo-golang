@@ -1,4 +1,4 @@
-package main
+package db
 
 import (
 	"context"
@@ -8,7 +8,7 @@ import (
 
 var db *pgxpool.Pool
 
-func initDB() {
+func New() *pgxpool.Pool{
 	// Cadena de conexión (user/pass/db)
 	connString := "postgres://postgres:postgres123@localhost:5432/biblioteca?sslmode=disable"
 
@@ -18,11 +18,12 @@ func initDB() {
 		log.Fatalf("No se pudo conectar a PostgreSQL: %v", err)
 	}
 
-	// Prueba rápida de conexión
-	err = db.Ping(context.Background())
-	if err != nil {
-		log.Fatalf("Ping falló: %v", err)
-	}
+	// // Prueba rápida de conexión
+	// err = db.Ping(context.Background())
+	// if err != nil {
+	// 	log.Fatalf("Ping falló: %v", err)
+	// }
 
-	log.Println("¡Conexión exitosa a PostgreSQL!")
+	// log.Println("¡Conexión exitosa a PostgreSQL!")
+	return db
 }
