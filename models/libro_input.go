@@ -11,7 +11,7 @@ type LibroInput struct {
 	Ano    int    `json:"ano"`
 }
 
-//aca no chequeo si es nil porque no uso punteros
+// aca no chequeo si es nil porque no uso punteros
 func (l LibroInput) Validate() error {
 	if strings.TrimSpace(l.Titulo) == "" {
 		return errors.New("titulo requerido")

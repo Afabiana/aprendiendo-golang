@@ -12,8 +12,15 @@ import (
 )
 
 type LibrosHandler struct {
-	Repo repository.LibrosRepository
+	repo repository.LibrosRepository
 }
+
+func NewLibrosHandler(repo repository.LibrosRepository) *LibrosHandler {
+    return &LibrosHandler{
+        repo: repo,
+    }
+}
+
 
 func (h *LibrosHandler) Libros(w http.ResponseWriter, r *http.Request) {
 	// w.Header().Set("Content-Type", "application/json")
@@ -22,7 +29,7 @@ func (h *LibrosHandler) Libros(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case http.MethodGet:
-		result, err := h.Repo.GetAll(r.Context())
+		result, err := h.repo.GetAll(r.Context())
 
 		if err != nil {
 			httphelpers.RespondError(w, "Error al consultar la base", http.StatusInternalServerError)
@@ -45,7 +52,7 @@ func (h *LibrosHandler) Libros(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		salida, err := h.Repo.Create(r.Context(), input)
+		salida, err := h.repo.Create(r.Context(), input)
 		if err != nil {
 			httphelpers.RespondError(w, "Error al crear nuevo libro", http.StatusInternalServerError)
 			return
@@ -87,7 +94,7 @@ func (h *LibrosHandler) LibrosByID(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 
-		salida, err := h.Repo.GetByID(r.Context(), id)
+		salida, err := h.repo.GetByID(r.Context(), id)
 
 		if err == repository.ErrNotFound {
 			httphelpers.RespondError(w, "libro no encontrado", http.StatusNotFound)
@@ -115,7 +122,7 @@ func (h *LibrosHandler) LibrosByID(w http.ResponseWriter, r *http.Request) {
 		}
 
 		//DB.EXEC para INSERT/UPDATE/DELETE
-		salida, err := h.Repo.Update(r.Context(), id, upd)
+		salida, err := h.repo.Update(r.Context(), id, upd)
 
 		if err == repository.ErrNotFound {
 			httphelpers.RespondError(w, "libro no encontrado", http.StatusNotFound)
@@ -148,7 +155,7 @@ func (h *LibrosHandler) LibrosByID(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		salida, err := h.Repo.Patch(r.Context(), id, patch)
+		salida, err := h.repo.Patch(r.Context(), id, patch)
 
 		if err == repository.ErrNotFound {
 			httphelpers.RespondError(w, "libro no encontrado", http.StatusNotFound)
@@ -164,7 +171,7 @@ func (h *LibrosHandler) LibrosByID(w http.ResponseWriter, r *http.Request) {
 		httphelpers.RespondJSON(w, http.StatusOK, salida)
 	case http.MethodDelete:
 
-		err := h.Repo.Delete(r.Context(), id)
+		err := h.repo.Delete(r.Context(), id)
 
 		if err == repository.ErrNotFound { //si 0 → 404
 			httphelpers.RespondError(w, "libro no encontrado", http.StatusNotFound)
