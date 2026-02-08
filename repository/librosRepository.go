@@ -23,10 +23,34 @@ func NewPostgresLibrosRepo(db *pgxpool.Pool) *PostgresLibrosRepo {
 	}
 }
 
-func (repo *PostgresLibrosRepo) GetAll(ctx context.Context) ([]models.Libro, error) {
+func (repo *PostgresLibrosRepo) GetAll(ctx context.Context, f models.LibroFilter) ([]models.Libro, error) {
 
-	rows, err := repo.DB.Query(ctx,
-		"SELECT id, titulo, autor, ano FROM libros ORDER BY id")
+	query := `SELECT id, titulo, autor, ano FROM libros WHERE 1=1`
+	args := []any{}
+	i := 1
+
+	if f.Autor != nil {
+		query += fmt.Sprintf(" AND autor ILIKE $%d", i)
+		args = append(args, "%"+*f.Autor+"%")
+		i++
+	}
+
+	if f.From != nil {
+		query += fmt.Sprintf(" AND ano >= $%d", i)
+		args = append(args, *f.From)
+		i++
+	}
+
+	if f.To != nil {
+		query += fmt.Sprintf(" AND ano <= $%id", i)
+		args = append(args, *f.To)
+		i++
+	}
+
+	query += fmt.Sprintf(" LIMIT $%d OFFSET $%d", i, i+1)
+	args = append(args, f.Limit, f.Offset)
+
+	rows, err := repo.DB.Query(ctx, query, args...)
 
 	if err != nil {
 		return nil, err

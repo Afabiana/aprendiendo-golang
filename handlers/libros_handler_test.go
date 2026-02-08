@@ -11,7 +11,6 @@ import (
 	"testing"
 )
 
-// var ErrNotFound = errors.New("libro not found")
 
 type FakeLibrosRepo struct {
 	libros map[int]models.Libro
@@ -107,7 +106,6 @@ func (f *FakeLibrosRepo) Delete(ctx context.Context, id int) error {
 	return nil
 }
 
-
 // --------------------- METODOS DE PRUEBA ---------------------
 
 func TestLibros_GET_All(t *testing.T) {
@@ -132,207 +130,251 @@ func TestLibros_GET_All(t *testing.T) {
 		t.Fatalf("esperaba 3 libros, vinieron %d", len(resp))
 	}
 }
-func TestGetLibro_OK(t *testing.T) {
-	repo := NewFakeLibrosRepo()
-	handler := NewLibrosHandler(repo)
 
-	req := httptest.NewRequest(http.MethodGet, "/libros/2", nil)
-	rr := httptest.NewRecorder()
-
-	//act
-	handler.LibrosByID(rr, req)
-
-	//assert
-	if rr.Code != http.StatusOK {
-		t.Fatalf("status esperado 200 pero vino %d", rr.Code)
+func TestLibros_GET_ByID_TableDriven(t *testing.T) {
+	tests := []struct {
+		name       string
+		id         string
+		wantStatus int
+		wantTitulo string
+	}{
+		{
+			name:       "existe",
+			id:         "2",
+			wantStatus: http.StatusOK,
+			wantTitulo: "1984",
+		},
+		{
+			name:       "no existe",
+			id:         "999",
+			wantStatus: http.StatusNotFound,
+		},
+		{
+			name:       "id invalido",
+			id:         "abc",
+			wantStatus: http.StatusBadRequest,
+		},
 	}
 
-	var resp models.Libro
-	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
-		t.Fatalf("json invalido: %v", err)
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := NewFakeLibrosRepo()
+			handler := NewLibrosHandler(repo)
 
-	if  resp.Titulo != "1984" {
-		t.Fatalf("respuesta incorrecta: %+v", resp)
-	}
-}
+			req := httptest.NewRequest(
+				http.MethodGet,
+				"/libros/"+tt.id,
+				nil,
+			)
+			rr := httptest.NewRecorder()
 
-func TestLibros_GET_ByID_NotFound(t *testing.T) {
-	repo := NewFakeLibrosRepo()
-	handler := NewLibrosHandler(repo)
+			handler.LibrosByID(rr, req)
 
-	req := httptest.NewRequest(http.MethodGet, "/libros/999", nil)
-	rr := httptest.NewRecorder()
+			if rr.Code != tt.wantStatus {
+				t.Fatalf("status esperado %d, vino %d", tt.wantStatus, rr.Code)
+			}
 
-	handler.LibrosByID(rr, req)
+			if tt.wantStatus == http.StatusOK {
+				resp := decodeJSON[models.Libro](t, rr)
 
-	if rr.Code != http.StatusNotFound {
-		t.Fatalf("status esperado 404, vino %d", rr.Code)
-	}
-}
-
-func TestLibros_POST_OK(t *testing.T){
-	repoLibros := NewFakeLibrosRepo()
-	handlerLibros := NewLibrosHandler(repoLibros)
-
-	input := models.LibroInput{
-		Titulo: "Rebelión en la granja", 
-		Autor: "George Orwell", 
-		Ano: 1945,
-	}
-
-	body, err := json.Marshal(input)
-
-	if err != nil{
-		t.Fatalf("Error serializando json: %v", err)
-	}
-
-	req := httptest.NewRequest(http.MethodPost, "/libros/", strings.NewReader(string(body)))
-	req.Header.Set("Content-Type", "application/json")
-
-	rr := httptest.NewRecorder()
-	handlerLibros.Libros(rr, req)
-
-	if rr.Code != http.StatusCreated{
-		t.Fatalf("status esperado 201, vino %d", rr.Code)
-	}
-
-	var resp models.Libro
-	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
-		t.Fatalf("json invalido: %v", err)
-	}
-
-	// 3️⃣ contenido
-	if resp.ID != 4 {
-		t.Fatalf("id esperado 4, vino %d", resp.ID)
-	}
-
-	if resp.Titulo != input.Titulo {
-		t.Fatalf("titulo incorrecto: %s", resp.Titulo)
-	}
-
-	// 4️⃣ repo modificado
-	if len(repoLibros.libros) != 4 {
-		t.Fatalf("esperaba 4 libros en el repo, hay %d", len(repoLibros.libros))
+				if tt.wantTitulo != "" && resp.Titulo != tt.wantTitulo {
+					t.Fatalf("titulo esperado %q, vino %q", tt.wantTitulo, resp.Titulo)
+				}
+			}
+		})
 	}
 }
 
-func TestLibros_POST_JSON_Invalido(t *testing.T) {
-	fakeRepo := NewFakeLibrosRepo()
-	handler := NewLibrosHandler(fakeRepo)
+func TestLibros_POST_TableDriven(t *testing.T) {
+	tests := []struct {
+		name       string
+		body       any
+		wantStatus int
+		wantCount  int
+	}{
+		{
+			name: "ok",
+			body: models.LibroInput{
+				Titulo: "Neuromancer",
+				Autor:  "William Gibson",
+				Ano:    1984,
+			},
+			wantStatus: http.StatusCreated,
+			wantCount:  4,
+		},
+		{
+			name:       "json invalido",
+			body:       "{titulo:}",
+			wantStatus: http.StatusBadRequest,
+			wantCount:  3,
+		},
+	}
 
-	body := strings.NewReader(`{titulo:}`) // JSON roto
-	req := httptest.NewRequest(http.MethodPost, "/libros", body)
-	req.Header.Set("Content-Type", "application/json")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := NewFakeLibrosRepo()
+			handler := NewLibrosHandler(repo)
 
-	rr := httptest.NewRecorder()
+			var req *http.Request
 
-	handler.Libros(rr, req)
+			switch v := tt.body.(type) {
+			case string:
+				req = httptest.NewRequest(http.MethodPost, "/libros", strings.NewReader(v))
+			default:
+				req = newJSONRequest(http.MethodPost, "/libros", v)
+			}
 
-	if rr.Code != http.StatusBadRequest {
-		t.Fatalf("status esperado 400, vino %d", rr.Code)
+			rr := httptest.NewRecorder()
+			handler.Libros(rr, req)
+
+			if rr.Code != tt.wantStatus {
+				t.Fatalf("status esperado %d, vino %d", tt.wantStatus, rr.Code)
+			}
+
+			if len(repo.libros) != tt.wantCount {
+				t.Fatalf("esperaba %d libros, hay %d", tt.wantCount, len(repo.libros))
+			}
+		})
 	}
 }
 
-func TestLibros_PUT_OK(t *testing.T) {
-	repo := NewFakeLibrosRepo()
-	handler := NewLibrosHandler(repo)
 
-	input := models.LibroInput{
-		Titulo: "Dune Messiah",
-		Autor:  "Frank Herbert",
-		Ano:    1969,
+func TestLibros_PUT_TableDriven(t *testing.T) {
+	tests := []struct {
+		name       string
+		id         string
+		input      models.LibroInput
+		wantStatus int
+	}{
+		{
+			name: "ok",
+			id:   "1",
+			input: models.LibroInput{
+				Titulo: "Dune Messiah",
+				Autor:  "Frank Herbert",
+				Ano:    1969,
+			},
+			wantStatus: http.StatusOK,
+		},
+		{
+			name: "no existe",
+			id:   "999",
+			input: models.LibroInput{
+				Titulo: "X",
+				Autor:  "Y",
+				Ano:    2000,
+			},
+			wantStatus: http.StatusNotFound,
+		},
 	}
 
-	req := newJSONRequest(http.MethodPut, "/libros/1", input)
-	rr := httptest.NewRecorder()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := NewFakeLibrosRepo()
+			handler := NewLibrosHandler(repo)
 
-	handler.LibrosByID(rr, req)
+			req := newJSONRequest(http.MethodPut, "/libros/"+tt.id, tt.input)
+			rr := httptest.NewRecorder()
 
-	if rr.Code != http.StatusOK {
-		t.Fatalf("status esperado 200, vino %d", rr.Code)
-	}
+			handler.LibrosByID(rr, req)
 
-	resp := decodeJSON[models.Libro](t, rr)
-
-	if resp.Titulo != "Dune Messiah" {
-		t.Fatalf("titulo incorrecto: %s", resp.Titulo)
-	}
-}
-
-func TestLibros_PUT_NotFound(t *testing.T) {
-	repo := NewFakeLibrosRepo()
-	handler := NewLibrosHandler(repo)
-
-	input := models.LibroInput{
-		Titulo: "X",
-		Autor:  "Y",
-		Ano:    2000,
-	}
-
-	req := newJSONRequest(http.MethodPut, "/libros/999", input)
-	rr := httptest.NewRecorder()
-
-	handler.LibrosByID(rr, req)
-
-	if rr.Code != http.StatusNotFound {
-		t.Fatalf("status esperado 404, vino %d", rr.Code)
-	}
-}
-
-func TestLibros_PATCH_OK(t *testing.T) {
-	repo := NewFakeLibrosRepo()
-	handler := NewLibrosHandler(repo)
-
-	patch := models.LibroPatch{
-		Titulo: ptr("Nuevo titulo"),
-	}
-
-	req := newJSONRequest(http.MethodPatch, "/libros/1", patch)
-	rr := httptest.NewRecorder()
-
-	handler.LibrosByID(rr, req)
-
-	if rr.Code != http.StatusOK {
-		t.Fatalf("status esperado 200, vino %d", rr.Code)
-	}
-
-	resp := decodeJSON[models.Libro](t, rr)
-
-	if resp.Titulo != "Nuevo titulo" {
-		t.Fatalf("patch no aplicado")
+			if rr.Code != tt.wantStatus {
+				t.Fatalf("status esperado %d, vino %d", tt.wantStatus, rr.Code)
+			}
+		})
 	}
 }
 
-func TestLibros_DELETE_OK(t *testing.T) {
-	repo := NewFakeLibrosRepo()
-	handler := NewLibrosHandler(repo)
-
-	req := httptest.NewRequest(http.MethodDelete, "/libros/1", nil)
-	rr := httptest.NewRecorder()
-
-	handler.LibrosByID(rr, req)
-
-	if rr.Code != http.StatusNoContent {
-		t.Fatalf("status esperado 204, vino %d", rr.Code)
+func TestLibros_PATCH_TableDriven(t *testing.T) {
+	tests := []struct {
+		name       string
+		id         string
+		patch      models.LibroPatch
+		wantStatus int
+		wantTitulo string
+	}{
+		{
+			name: "patch titulo",
+			id:   "1",
+			patch: models.LibroPatch{
+				Titulo: ptr("Nuevo titulo"),
+			},
+			wantStatus: http.StatusOK,
+			wantTitulo: "Nuevo titulo",
+		},
+		{
+			name:       "no existe",
+			id:         "999",
+			patch:      models.LibroPatch{Titulo: ptr("X")},
+			wantStatus: http.StatusNotFound,
+		},
 	}
 
-	if _, ok := repo.libros[1]; ok {
-		t.Fatalf("el libro no fue eliminado")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := NewFakeLibrosRepo()
+			handler := NewLibrosHandler(repo)
+
+			req := newJSONRequest(http.MethodPatch, "/libros/"+tt.id, tt.patch)
+			rr := httptest.NewRecorder()
+
+			handler.LibrosByID(rr, req)
+
+			if rr.Code != tt.wantStatus {
+				t.Fatalf("status esperado %d, vino %d", tt.wantStatus, rr.Code)
+			}
+
+			if tt.wantStatus == http.StatusOK {
+				resp := decodeJSON[models.Libro](t, rr)
+
+				if tt.wantTitulo != "" && resp.Titulo != tt.wantTitulo {
+					t.Fatalf("titulo incorrecto")
+				}
+			}
+		})
 	}
 }
 
-func TestLibros_DELETE_NotFound(t *testing.T) {
-	repo := NewFakeLibrosRepo()
-	handler := NewLibrosHandler(repo)
+func TestLibros_DELETE_TableDriven(t *testing.T) {
+	tests := []struct {
+		name       string
+		id         string
+		wantStatus int
+		wantExists bool
+	}{
+		{
+			name:       "ok",
+			id:         "1",
+			wantStatus: http.StatusNoContent,
+			wantExists: false,
+		},
+		{
+			name:       "no existe",
+			id:         "999",
+			wantStatus: http.StatusNotFound,
+			wantExists: false,
+		},
+	}
 
-	req := httptest.NewRequest(http.MethodDelete, "/libros/999", nil)
-	rr := httptest.NewRecorder()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := NewFakeLibrosRepo()
+			handler := NewLibrosHandler(repo)
 
-	handler.LibrosByID(rr, req)
+			req := httptest.NewRequest(http.MethodDelete, "/libros/"+tt.id, nil)
+			rr := httptest.NewRecorder()
 
-	if rr.Code != http.StatusNotFound {
-		t.Fatalf("status esperado 404, vino %d", rr.Code)
+			handler.LibrosByID(rr, req)
+
+			if rr.Code != tt.wantStatus {
+				t.Fatalf("status esperado %d, vino %d", tt.wantStatus, rr.Code)
+			}
+
+			_, exists := repo.libros[1]
+			if exists != tt.wantExists && tt.id == "1" {
+				t.Fatalf("estado del repo incorrecto")
+			}
+		})
 	}
 }
 

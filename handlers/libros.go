@@ -5,6 +5,7 @@ import (
 	"api-libros/httphelpers"
 	"api-libros/models"
 	"api-libros/repository"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -29,7 +30,15 @@ func (h *LibrosHandler) Libros(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case http.MethodGet:
-		result, err := h.repo.GetAll(r.Context())
+		filtro, err := parseLibroFilter(r)
+
+		if err != nil{
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+
+		result, err := h.repo.GetAll(r.Context(), filtro)
 
 		if err != nil {
 			httphelpers.RespondError(w, "Error al consultar la base", http.StatusInternalServerError)
@@ -197,6 +206,54 @@ func (h *LibrosHandler) LibrosByID(w http.ResponseWriter, r *http.Request) {
 
 	}
 
+}
+
+func parseLibroFilter(r *http.Request) (filter models.LibroFilter, err error){
+	q := r.URL.Query()
+
+	var f models.LibroFilter
+
+	if autor := q.Get("autor"); autor != "" {
+		f.Autor = &autor
+	}
+
+
+	if from := q.Get("from"); from != "" {
+		v,err := strconv.Atoi(from)
+		if err != nil{
+			return f, fmt.Errorf("from invalido")
+		}
+
+		f.From = &v
+	}
+
+	if to := q.Get("to"); to != "" {
+		v, err := strconv.Atoi(to)
+		if err != nil {
+			return f, fmt.Errorf("to invalido")
+		}
+		f.To = &v
+	}
+
+	if limit := q.Get("limit"); limit != ""{
+		v, err := strconv.Atoi(limit)
+		if err != nil{
+			return f, fmt.Errorf("limit invalido")
+		}
+		f.Limit = v
+	}else{
+		f.Limit = 50 // default
+	}
+
+	if offset := q.Get("offset"); offset != ""{
+		v, err := strconv.Atoi(offset)
+		if err != nil {
+			return f, fmt.Errorf("offset invalido")
+		}
+		f.Offset = v
+	}
+
+	return f, nil
 }
 
 //TODO: estructurar bien el proyecto, los DTOS de response y de respuesta, packages etc
